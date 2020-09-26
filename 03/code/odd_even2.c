@@ -1,0 +1,192 @@
+////////////////////////////////////////////////
+//
+//  Copyright(C), 广州粤嵌通信科技股份有限公司
+//
+//  作者: Vincent Lin (林世霖)
+//
+//  微信公众号: 秘籍酷
+//  技术交流群: 260492823（QQ群）
+//  GitHub链接: https://github.com/vincent040
+//
+//  描述: 使用内核链表来实现奇偶数重排
+//
+////////////////////////////////////////////////
+
+#include <time.h>
+#include <errno.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <string.h>
+#include <strings.h>
+#include <stdbool.h>
+#include <pthread.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+
+// 包含内核链表头文件
+#include "kernel_list.h"
+
+
+// 设计大结构体节点
+struct node
+{
+	int data; // 数据域
+	struct list_head list; // 小结构体
+};
+
+// 初始化一条包含头结点的空链表
+// 注意，内核链表的实现都是有头结点的
+struct node * init_list()
+{
+	struct node * head = malloc(sizeof(struct node));
+
+	if(head != NULL)
+	{
+		// 数据域不管
+		
+		// 小结构体要自己形成循环链表
+		// 1. 自己动手
+		//head->list.prev = &head->list;
+		//head->list.next = &head->list;
+
+		// 2. 直接使用内核链表的实现
+		INIT_LIST_HEAD(&head->list);
+	}
+	return head;
+}
+
+// 新建一个节点，并存入数据data
+struct node * new_node(int data)
+{
+	struct node * new = malloc(sizeof(struct node));
+
+	if(new != NULL)
+	{
+		// 数据域
+		new->data = data;
+		
+		// 小结构体要自己形成循环链表
+		INIT_LIST_HEAD(&new->list);
+	}
+	return new;
+}
+
+// 遍历链表，将节点数据显示出来
+void show(struct node * head)
+{
+	if(list_empty(&head->list))
+	{
+		printf("链表为空\n");
+		return;
+	}
+
+	struct node *pos;
+
+	list_for_each_entry(pos, &head->list, list)
+	{
+		printf("%d\t", pos->data);
+	}
+	printf("\n");
+}
+
+// 奇偶数重排
+void rearrange(struct node *head)
+{
+	struct list_head *pos, *k=head->list.prev;
+	struct node *p;
+
+	// pos将会从head开始，逐个往前遍历每个小结构体
+	list_for_each_prev(pos, &head->list)
+	{
+		// 从小结构体pos，获取对应的大结构体p
+		p = list_entry(pos, struct node, list);
+
+		if(p->data%2 == 0) // 偶数
+		{
+			// 将pos移动到链表的末尾
+			list_move_tail(pos, &head->list);
+			pos = k;
+		}
+
+		else // 奇数
+			k = pos;
+	}
+}
+
+// 功能:
+// 删除并释放链表的每一个有效节点
+// 使得链表回归初始化的状态（带头结点）
+void destroy(struct node *head)
+{
+	struct list_head *pos;
+	struct node *p;
+
+	/*
+	for(pos=head->list.next;
+	    pos!=&head->list;
+	    pos=head->list.next)
+	{
+		// 1. 剔除节点
+		list_del(pos);
+
+		// 2. 释放内存
+		p = list_entry(pos, struct node, list);
+		free(p);
+	}
+	*/
+
+	// 在遍历链表的过程中，会删除节点
+	// 为了不会由于删掉正在遍历的节点而迷路
+	// 定义了n来保留即将要删除的节点的下一个节点的位置
+	struct list_head *n;
+
+	// 以下是一个宏，其实就是一个for循环
+	// 即: 从head开始，让pos逐个指向后续的每个小结构体
+	list_for_each_safe(pos, n, &head->list)
+	{
+		// 1. 剔除节点
+		list_del(pos);
+
+		// 2. 释放内存
+		p = list_entry(pos, struct node, list);
+		free(p);
+	}
+}
+
+int main(int argc, char **argv)
+{
+	// 1，初始化空链表
+	struct node * head = init_list();
+
+	// 2，将一些自然数置入链表中
+	printf("请输入你要多少个节点:");
+	int n;
+	scanf("%d", &n);
+	for(int i=1; i<=n; i++)
+	{
+		// a. 创建新节点new
+		struct node *new = new_node(i);
+
+		// b. 将新节点new置入链表的末尾
+		// &new->list  是指向new 节点中的小结构体的指针
+		// &head->list 是指向head节点中的小结构体的指针
+		list_add_tail(&new->list, &head->list);
+	}
+	show(head);
+
+	// 奇偶数重排
+	rearrange(head);
+	show(head);
+
+	// 销毁链表
+	destroy(head);
+	show(head);
+
+	return 0;
+}
